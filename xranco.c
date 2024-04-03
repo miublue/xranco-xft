@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2022-2023 <alpheratz99@protonmail.com>
+	Copyright (C) 2022-2024 <alpheratz99@protonmail.com>
 
 	This program is free software; you can redistribute it and/or modify it
 	under the terms of the GNU General Public License version 2 as published by
@@ -196,7 +196,7 @@ path_is_file(const char *path)
 {
 	struct stat sb;
 
-	if (stat(path, &sb) < 0 || !S_ISREG(sb.st_mode))
+	if (stat(path, &sb) < 0 || S_ISDIR(sb.st_mode))
 		return 0;
 
 	return 1;
