@@ -1,7 +1,7 @@
 xranco is a random color generator for X.
 For more information about it's usage check `man xranco`.
 
-This program requires libX11 to be installed.
+This program requires libX11 and libXft to be installed.
 In order to build this program you need to run `make`.
 
 This program is free software; you can redistribute it
