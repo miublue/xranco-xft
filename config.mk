@@ -8,7 +8,7 @@ MANPREFIX = $(PREFIX)/share/man
 
 PKG_CONFIG = pkg-config
 
-DEPENDENCIES = x11
+DEPENDENCIES = x11 xft
 
 INCS = $(shell $(PKG_CONFIG) --cflags $(DEPENDENCIES)) -Iinclude
 LIBS = $(shell $(PKG_CONFIG) --libs $(DEPENDENCIES))
