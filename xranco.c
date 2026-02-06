@@ -55,7 +55,8 @@
 #define _NET_WM_WINDOW_OPACITY         XATOM("_NET_WM_WINDOW_OPACITY")
 
 struct Color {
-	GC bg, text;
+	GC bg;
+	XftColor text_color;
 	unsigned long rgb;
 	char hex[HEX_STR_LEN+1];
 };
@@ -80,7 +81,6 @@ static unsigned int width, height;
 static struct Palette palette;
 static XftDraw *draw;
 static XftFont *font;
-static XftColor text_color;
 
 static void
 die(const char *fmt, ...)
@@ -143,7 +143,6 @@ create_window(const char *fontname)
 	);
 
 	draw = XftDrawCreate(display, window, visual, colormap);
-	text_color = alloc_color("#000000");
 	XMapWindow(display, window);
 }
 
@@ -151,13 +150,13 @@ static void
 destroy_window(void)
 {
 	int screen = DefaultScreen(display);
-	XftColorFree(display, DefaultVisual(display, screen), DefaultColormap(display, screen), &text_color);
 	XftFontClose(display, font);
 	XftDrawDestroy(draw);
 
 	while (--palette.count >= 0) {
 		XFreeGC(display, palette.colors[palette.count].bg);
-		XFreeGC(display, palette.colors[palette.count].text);
+		XftColorFree(display, DefaultVisual(display, screen),
+				DefaultColormap(display, screen), &palette.colors[palette.count].text_color);
 	}
 
 	XCloseDisplay(display);
@@ -182,14 +181,7 @@ set_color(int idx, unsigned long color)
 	c->rgb = color;
 
 	XSetForeground(display, c->bg, color);
-
-	XSetForeground(
-		display, c->text,
-		get_color_brightness(color) < 50 ?
-			0xffffff :
-			0x000000
-	);
-
+	c->text_color = alloc_color(get_color_brightness(color) < 50 ? "#ffffff" : "#000000");
 	snprintf(c->hex, LEN(c->hex), "#%06lx", color);
 }
 
@@ -200,9 +192,6 @@ add_color(unsigned long color)
 
 	c = &palette.colors[palette.count++];
 	c->bg = XCreateGC(display, window, 0, NULL);
-
-	XGCValues gc_value = { .foreground = text_color.pixel };
-	c->text = XCreateGC(display, window, GCForeground, &gc_value);
 
 	set_color(palette.count - 1, color);
 }
@@ -291,7 +280,7 @@ h_expose(XExposeEvent *ev)
 		c = &palette.colors[i];
 
 		XFillRectangle(display, window, c->bg, box.x, box.y, box.width, box.height);
-		XftDrawStringUtf8(draw, &text_color, font, tpos.x, tpos.y, (unsigned char*)c->hex, HEX_STR_LEN);
+		XftDrawStringUtf8(draw, &c->text_color, font, tpos.x, tpos.y, (unsigned char*)c->hex, HEX_STR_LEN);
 
 		if (((int)(height)) / 2 < (palette.count + 1) * (font->ascent + 5))
 			continue;
