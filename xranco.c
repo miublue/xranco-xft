@@ -41,6 +41,9 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
+#include <X11/Xft/Xft.h>
+
+#define DEFAULT_FONT "monospace:pixelsize=15"
 
 #define MAX_COLORS (9)
 #define HEX_STR_LEN (sizeof("#000000") - 1)
@@ -75,7 +78,9 @@ static Display *display;
 static Window window, root;
 static unsigned int width, height;
 static struct Palette palette;
-static XFontStruct *font;
+static XftDraw *draw;
+static XftFont *font;
+static XftColor text_color;
 
 static void
 die(const char *fmt, ...)
@@ -98,15 +103,29 @@ enotnull(const char *str, const char *name)
 	return str;
 }
 
+static XftColor
+alloc_color(const char *hex)
+{
+	XftColor color;
+	int screen = DefaultScreen(display);
+	XftColorAllocName(display, DefaultVisual(display, screen),
+			DefaultColormap(display, screen), hex, &color);
+	return color;
+}
+
 static void
-create_window(void)
+create_window(const char *fontname)
 {
 	Atom protocols[1];
 
 	if (NULL == (display = XOpenDisplay(NULL)))
 		die("can't open display");
 
-	if (NULL == (font = XLoadQueryFont(display, "fixed")))
+	int screen = DefaultScreen(display);
+	Colormap colormap = DefaultColormap(display, screen);
+	Visual *visual = DefaultVisual(display, screen);
+
+	if (NULL == (font = XftFontOpenName(display, screen, fontname)))
 		die("can't open font");
 
 	width = height = 600;
@@ -123,13 +142,18 @@ create_window(void)
 		PropModeReplace, (const unsigned char[]) { 0xff, 0xff, 0xff, 0xff }, 1
 	);
 
+	draw = XftDrawCreate(display, window, visual, colormap);
+	text_color = alloc_color("#000000");
 	XMapWindow(display, window);
 }
 
 static void
 destroy_window(void)
 {
-	XUnloadFont(display, font->fid);
+	int screen = DefaultScreen(display);
+	XftColorFree(display, DefaultVisual(display, screen), DefaultColormap(display, screen), &text_color);
+	XftFontClose(display, font);
+	XftDrawDestroy(draw);
 
 	while (--palette.count >= 0) {
 		XFreeGC(display, palette.colors[palette.count].bg);
@@ -176,10 +200,9 @@ add_color(unsigned long color)
 
 	c = &palette.colors[palette.count++];
 	c->bg = XCreateGC(display, window, 0, NULL);
-	c->text = XCreateGC(display, window, 0, NULL);
 
-	XSetFont(display, c->text, font->fid);
-	XSetFont(display, c->bg, font->fid);
+	XGCValues gc_value = { .foreground = text_color.pixel };
+	c->text = XCreateGC(display, window, GCForeground, &gc_value);
 
 	set_color(palette.count - 1, color);
 }
@@ -245,7 +268,10 @@ h_expose(XExposeEvent *ev)
 	struct Color *c;
 	struct Rectangle box = { 0 };
 	struct Point tpos = { 0 };
+	XGlyphInfo font_extents;
 	int i, j, wavail;
+
+	int screen = DefaultScreen(display);
 
 	if (ev->count != 0)
 		return;
@@ -254,16 +280,18 @@ h_expose(XExposeEvent *ev)
 	tpos.y = (height + font->ascent) / 2;
 	box.height = height;
 
+	XftTextExtents8(display, font, (unsigned char*)"0", 1, &font_extents);
+
 	for (i = 0; i < palette.count; ++i) {
 		box.x += box.width;
 		box.width = wavail / (palette.count - i);
-		tpos.x = box.x + (box.width - XTextWidth(font, "0", 1) * HEX_STR_LEN) / 2;
+		tpos.x = box.x + (box.width - font_extents.width * HEX_STR_LEN) / 2;
 		wavail -= box.width;
 
 		c = &palette.colors[i];
 
 		XFillRectangle(display, window, c->bg, box.x, box.y, box.width, box.height);
-		XDrawString(display, window, c->text, tpos.x, tpos.y, c->hex, HEX_STR_LEN);
+		XftDrawStringUtf8(draw, &text_color, font, tpos.x, tpos.y, (unsigned char*)c->hex, HEX_STR_LEN);
 
 		if (((int)(height)) / 2 < (palette.count + 1) * (font->ascent + 5))
 			continue;
@@ -271,9 +299,13 @@ h_expose(XExposeEvent *ev)
 		for (j = 0; j < palette.count; ++j) {
 			if (j == i)
 				continue;
-			XDrawString(display, window, palette.colors[j].bg,
+
+			XftColor col = alloc_color(palette.colors[j].hex);
+			XftDrawStringUtf8(draw, &col, font,
 					tpos.x, height - (j + 1 - (j > i)) * (font->ascent + 5),
-					palette.colors[j].hex, HEX_STR_LEN);
+					(unsigned char*)palette.colors[j].hex, HEX_STR_LEN);
+			XftColorFree(display, DefaultVisual(display, screen),
+					DefaultColormap(display, screen), &col);
 		}
 	}
 }
@@ -301,7 +333,7 @@ h_client_message(XClientMessageEvent *ev)
 static void
 usage(void)
 {
-	puts("usage: xranco [-hv123456789] [-l palette_file]");
+	puts("usage: xranco [-hv123456789] [-l palette_file] [-f font_name]");
 	exit(0);
 }
 
@@ -317,10 +349,11 @@ main(int argc, char **argv)
 {
 	XEvent ev;
 	int ncolors;
-	const char *loadpath;
+	const char *loadpath, *loadfont;
 
 	ncolors = 1;
 	loadpath = NULL;
+	loadfont = NULL;
 
 	while (++argv, --argc > 0) {
 		if ((*argv)[0] == '-' && (*argv)[1] != '\0' && (*argv)[2] == '\0') {
@@ -328,6 +361,7 @@ main(int argc, char **argv)
 			case 'h': usage(); break;
 			case 'v': version(); break;
 			case 'l': --argc; loadpath = enotnull(*++argv, "path"); break;
+			case 'f': --argc; loadfont = enotnull(*++argv, "font"); break;
 			case '1': case '2': case '3':
 			case '4': case '5': case '6':
 			case '7': case '8': case '9': ncolors = atoi(*argv + 1); break;
@@ -339,7 +373,7 @@ main(int argc, char **argv)
 	}
 
 	srand(getpid());
-	create_window();
+	create_window(NULL == loadfont? DEFAULT_FONT : loadfont);
 
 	if (NULL == loadpath) create_palette(ncolors);
 	else load_palette(loadpath);
